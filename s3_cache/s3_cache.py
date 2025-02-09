@@ -59,7 +59,6 @@ class S3FileSystem(FileSystem):
         if os.path.exists(local_path):
             # Verify if cache is stale
             if self._is_cache_valid(s3_key, metadata_file):
-                print(f'Using local file {local_path}')
                 return local_path
                 
         # Download from S3 if cache is invalid/missing
@@ -67,13 +66,8 @@ class S3FileSystem(FileSystem):
 
     def modified(self, path: str) -> datetime:
         """Get the last modified timestamp of the S3 object."""
-        try:
-            head = self.s3.head_object(Bucket=self.bucket_name, Key=path)
-            return head['LastModified']
-        except ClientError as e:
-            if e.response['Error']['Code'] == '404':
-                raise FileNotFoundError(f"Object {path} not found in S3")
-            raise
+        fs = S3FileSystem()
+        return fs.modified(path=path)
 
     def ls(self, path: str) -> list[str]:
         """List contents of the S3 bucket under the given prefix."""
@@ -133,6 +127,7 @@ class LocalFileSystem(FileSystem):
         self.base_dir = base_dir
 
     def get_file(self, path: str) -> str:
+        path = path.replace('/', os.sep)
         return os.path.join(self.base_dir, path)
         
     def modified(self, path: str) -> datetime:
