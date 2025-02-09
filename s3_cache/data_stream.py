@@ -35,7 +35,7 @@ class DataStream:
         """Construct file path from components"""
         date_str = pd.to_datetime(date).strftime('%Y-%m-%d')
         filename = f"{self.prefix}{date_str}{self.suffix}.csv"
-        return os.path.join(self.base_folder, filename)
+        return self.file_system.get_file(self.base_folder, filename)
 
     def _load_multiple_files(self, dates):
         """Load and combine multiple CSV files using file_system for file lookup"""

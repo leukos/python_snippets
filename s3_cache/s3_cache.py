@@ -14,17 +14,17 @@ class FileSystem(ABC):
     """Abstract base class for file system operations"""
     
     @abstractmethod
-    def get_file(self, path: str) -> str:
+    def get_file(self, path: str, *params) -> str:
         """Retrieve file from the filesystem"""
         pass
     
     @abstractmethod
-    def modified(self, path: str) -> datetime:
+    def modified(self, path: str, *params) -> datetime:
         """Get last modified timestamp of file"""
         pass
         
     @abstractmethod
-    def ls(self, path: str) -> list[str]:
+    def ls(self, path: str, *params) -> list[str]:
         """List contents of directory"""
         pass
         
@@ -34,9 +34,16 @@ class FileSystem(ABC):
         pass
         
     @abstractmethod
-    def created(self, path: str) -> datetime:
+    def created(self, path: str, *params) -> datetime:
         """Get creation timestamp of file"""
         pass
+
+    def _create_full_path(self, path: str, params: list[str]) -> str:
+        if not params:
+            return path
+        return f"{path}/{'/'.join(params)}"
+
+
 
 
 class S3FileSystem(FileSystem):
@@ -48,47 +55,51 @@ class S3FileSystem(FileSystem):
         # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def get_file(self, s3_key):
+    def get_file(self, path, *params):
         """Retrieve file from cache or S3, returns local file path"""
-        local_path = os.path.join(self.cache_dir, s3_key.replace('/', os.sep))
+        full_path = self._create_full_path(path, list(params))
+        local_path = os.path.join(self.cache_dir, full_path.replace('/', os.sep))
         metadata_file = f"{local_path}.meta"
-
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
         # Check if file exists in cache
         if os.path.exists(local_path):
             # Verify if cache is stale
-            if self._is_cache_valid(s3_key, metadata_file):
+            if self._is_cache_valid(full_path, metadata_file):
                 return local_path
                 
         # Download from S3 if cache is invalid/missing
-        return self._refresh_cache(s3_key, local_path, metadata_file)
+        return self._refresh_cache(full_path, local_path, metadata_file)
 
-    def modified(self, path: str) -> datetime:
+    def modified(self, path: str, *params) -> datetime:
         """Get the last modified timestamp of the S3 object."""
+        full_path = self._create_full_path(path, list(params))
         fs = S3FileSystem()
-        return fs.modified(path=path)
+        return fs.modified(path=full_path)
 
-    def ls(self, path: str) -> list[str]:
+
+    def ls(self, path: str, *params) -> list[str]:
         """List contents of the S3 bucket under the given prefix."""
+        full_path = self._create_full_path(path, list(params))
         fs = S3FileSystem()
-        return fs.ls(path=path)
+        return fs.ls(path=full_path)
+
 
     def glob(self, pattern: str) -> list[str]:
         """Find S3 objects matching the given glob pattern."""
         fs = S3FileSystem()
         return fs.glob(pattern=pattern)
         
-    def created(self, path: str) -> datetime:
+    def created(self, path: str, *params) -> datetime:
         """Get the creation timestamp of the S3 object (using LastModified as a proxy)."""
+        full_path = self._create_full_path(path, list(params))
         fs = S3FileSystem()
-        return fs.created(path=path)
+        return fs.created(path=full_path)
 
-    def _is_cache_valid(self, s3_key, metadata_file):
+
+    def _is_cache_valid(self, full_path: str, metadata_file: str) -> bool:
         """Check if cached file matches S3's Last-Modified"""
         try:
-            # Get S3 object metadata
-            head = self.s3.head_object(Bucket=self.bucket_name, Key=s3_key)
+            head = self.s3.head_object(Bucket=self.bucket_name, Key=full_path)
             s3_last_modified = head['LastModified'].timestamp()
             
             # Get cached metadata
@@ -98,18 +109,19 @@ class S3FileSystem(FileSystem):
                     return s3_last_modified <= cached_last_modified
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
-                raise FileNotFoundError(f"Object {s3_key} not found in S3")
+                raise FileNotFoundError(f"Object {full_path} not found in S3")
             raise
         return False
 
-    def _refresh_cache(self, s3_key, local_path, metadata_file):
+    def _refresh_cache(self, full_path: str, local_path: str, metadata_file: str):
         """Download file from S3 and update cache"""
         try:
             # Download file
-            self.s3.download_file(self.bucket_name, s3_key, local_path)
+
+            self.s3.download_file(self.bucket_name, full_path, local_path)
             
             # Get and store last modified timestamp
-            head = self.s3.head_object(Bucket=self.bucket_name, Key=s3_key)
+            head = self.s3.head_object(Bucket=self.bucket_name, Key=full_path)
             last_modified = head['LastModified'].timestamp()
             
             with open(metadata_file, 'w') as f:
@@ -118,11 +130,13 @@ class S3FileSystem(FileSystem):
             return local_path
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
-                raise FileNotFoundError(f"Object {s3_key} not found in S3")
+                raise FileNotFoundError(f"Object {full_path} not found in S3")
             raise
 
 
+
 class LocalFileSystem(FileSystem):
+
     def __init__(self, base_dir=""):
         self.base_dir = base_dir
 
