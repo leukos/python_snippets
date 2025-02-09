@@ -1,73 +1,8 @@
-import os
-import boto3
-from botocore.exceptions import ClientError
-from datetime import datetime
-import logging
 import pandas as pd
 import os
+
 from datetime import datetime
-
-class S3FileCache:
-    def __init__(self, bucket_name, cache_dir='s3_cache'):
-        self.bucket_name = bucket_name
-        self.cache_dir = cache_dir
-        self.s3 = boto3.client('s3')
-        
-        # Create cache directory if it doesn't exist
-        os.makedirs(self.cache_dir, exist_ok=True)
-
-    def get_file(self, s3_key):
-        """Retrieve file from cache or S3, returns local file path"""
-        local_path = os.path.join(self.cache_dir, s3_key.replace('/', '_'))
-        metadata_file = f"{local_path}.meta"
-
-        # Check if file exists in cache
-        if os.path.exists(local_path):
-            # Verify if cache is stale
-            if self._is_cache_valid(s3_key, metadata_file):
-                print(f'Using local file {local_path}')
-                return local_path
-                
-        # Download from S3 if cache is invalid/missing
-        return self._refresh_cache(s3_key, local_path, metadata_file)
-
-    def _is_cache_valid(self, s3_key, metadata_file):
-        """Check if cached file matches S3's Last-Modified"""
-        try:
-            # Get S3 object metadata
-            head = self.s3.head_object(Bucket=self.bucket_name, Key=s3_key)
-            s3_last_modified = head['LastModified'].timestamp()
-            
-            # Get cached metadata
-            if os.path.exists(metadata_file):
-                with open(metadata_file, 'r') as f:
-                    cached_last_modified = float(f.read())
-                    return s3_last_modified <= cached_last_modified
-        except ClientError as e:
-            if e.response['Error']['Code'] == '404':
-                raise FileNotFoundError(f"Object {s3_key} not found in S3")
-            raise
-        return False
-
-    def _refresh_cache(self, s3_key, local_path, metadata_file):
-        """Download file from S3 and update cache"""
-        try:
-            # Download file
-            self.s3.download_file(self.bucket_name, s3_key, local_path)
-            
-            # Get and store last modified timestamp
-            head = self.s3.head_object(Bucket=self.bucket_name, Key=s3_key)
-            last_modified = head['LastModified'].timestamp()
-            
-            with open(metadata_file, 'w') as f:
-                f.write(str(last_modified))
-                
-            return local_path
-        except ClientError as e:
-            if e.response['Error']['Code'] == '404':
-                raise FileNotFoundError(f"Object {s3_key} not found in S3")
-            raise
-
+from s3_cache.s3_cache import S3FileSystem
 
 
 class CSVDataStream:
@@ -109,9 +44,6 @@ class CSVDataStream:
         return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
     
 
-import pandas as pd
-import os
-from datetime import datetime
 
 class CachedCSVDataStream:
     def __init__(self, stream_name, base_folder, prefix="", suffix="", cache_dir="s3_cache"):
@@ -178,16 +110,4 @@ class CachedCSVDataStream:
             except FileNotFoundError:
                 continue
         return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-
-
-            
-# Usage example
-if __name__ == "__main__":
-    cache = S3FileCache('testbucket')
     
-    # This will download and cache the file
-    local_file = cache.get_file('EOD_Prices/EOD_Prices_2025-01-03.csv')
-    print(f"Using cached file at: {local_file}")
-    
-    # Subsequent calls will use cached version unless S3 object changes
-    local_file = cache.get_file('EOD_Prices/EOD_Prices_2025-01-02.csv')
